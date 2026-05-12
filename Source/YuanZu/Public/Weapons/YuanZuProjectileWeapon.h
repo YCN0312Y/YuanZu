@@ -26,7 +26,7 @@ public:
 	virtual void Tick(float DeltaTime) override;
 	virtual void Fire(const FVector& HitTarget) override;
 
-private:
+protected:
 	UPROPERTY(EditAnywhere, Category = "YuanZu|Projectile")
 	TSubclassOf<AYuanZuProjectile> ProjectileClass;
 

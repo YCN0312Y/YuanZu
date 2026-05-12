@@ -30,6 +30,9 @@ public:
 	//当前武器的弹药数量
 	UPROPERTY(meta = (BindWidget))
 	UTextBlock* CurrentAmmoText;
+	//子弹类型
+	UPROPERTY(meta = (BindWidget))
+	UTextBlock* AmmoTypeText;
 	//枪械名称
 	UPROPERTY(meta = (BindWidget))
 	UTextBlock* WeaponNameText;
@@ -38,7 +41,7 @@ public:
 	UImage * WeaponImage;
 	//枪械图标
 	UPROPERTY(EditAnywhere, Category = YuanZu, meta = (AllowPrivateAccess = "true"))
-	TArray<FYuanZuWeaponData>WeaponIcon;
+	TArray<FYuanZuWeaponData>WeaponData;
 
 	UPROPERTY()
 	AYuanZuWeapon* Weapon;

@@ -31,11 +31,18 @@ void UYuanZuWeaponProperty::SetWeaponNameByWeapon(AYuanZuWeapon* InWeapon)
 
 	if (InWeapon)
 	{
-		for (FYuanZuWeaponData& Data : WeaponIcon)
+		for (int32 i = 0; i < WeaponData.Num(); i++)
 		{
-			if (InWeapon->GetWeaponType() == Data.WeaponType)
+			if (WeaponData.IsValidIndex(i))
 			{
-				WeaponImage->SetBrushFromTexture(Data.WeaponTexture);
+				for (FYuanZuWeaponData& Data : WeaponData)
+				{
+					if (InWeapon->GetAmmoType() == Data.AmmoType)
+					{
+						WeaponImage->SetBrushFromTexture(Data.WeaponTexture);
+						AmmoTypeText->SetText(Data.AmmoText);
+					}
+				}
 			}
 		}
 		WeaponNameText->SetText(InWeapon->GetWeaponDisplayName());

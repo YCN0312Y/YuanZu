@@ -11,6 +11,7 @@
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/Actor.h"
 #include "Kismet/KismetMathLibrary.h"
+#include "Kismet/GameplayStatics.h"
 #include "GameFramework/PhysicsVolume.h"
 #include "Components/BoxComponent.h"
 #include "Animation/YuanZuAnimInstance.h"
@@ -24,14 +25,21 @@
 #include "Gameplay/YuanZuPlayerState.h"
 #include "Weapons/Rests/YuanZuWeaponTypes.h"
 #include "Materials/MaterialInterface.h"
+#include "Engine/SkeletalMeshSocket.h"
+#include "Weapons/YuanZuSnipeProjectileWeapon.h"
+#include "Components/SphereComponent.h"
+#include "Sound/SoundCue.h"
+#include "Components/SplineComponent.h"
+#include "Items/YuanZuPickupItem.h"
 
 AYuanZuCharacterBase::AYuanZuCharacterBase()
 {
 	PrimaryActorTick.bCanEverTick = true;
+
 	//弹簧臂
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(GetMesh());
-	CameraBoom->TargetArmLength = 350.0f;
+	CameraBoom->TargetArmLength = 200.f;
 	CameraBoom->bUsePawnControlRotation = true;
 	CameraBoom->SocketOffset = FVector(0.f, 50.f, 40.f);
 
@@ -45,24 +53,23 @@ AYuanZuCharacterBase::AYuanZuCharacterBase()
 	AmmoMesh->SetVisibility(false);
 	AmmoMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-	bUseControllerRotationYaw = false;
+	bUseControllerRotationYaw = true;
 	//生成碰撞处理方法为：尝试调整位置 但始终会重生
 	SpawnCollisionHandlingMethod = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
-
-	//头顶小部件
-	//OverHeadWidget = CreateDefaultSubobject<UWidgetComponent>(TEXT("OverHeadWidget"));
-	//OverHeadWidget->SetupAttachment(RootComponent);
 
 	//战斗组件
 	Combat = CreateDefaultSubobject<UYuanZuCombatComponent>(TEXT("Combat"));
 	Combat->SetIsReplicated(true);
 
+	ProjectileLine = CreateDefaultSubobject<USplineComponent>(TEXT("ProjectileLine"));
+	ProjectileLine->SetupAttachment(GetMesh());
+
 	//时间轴
-	RunningTimeline = CreateDefaultSubobject<UTimelineComponent>(TEXT("RunningTimeline"));
+	WalkingTimeline = CreateDefaultSubobject<UTimelineComponent>(TEXT("WalkingTimeline"));
 	SwimTimeline = CreateDefaultSubobject<UTimelineComponent>(TEXT("SwimTimeline"));
 
-	GetCharacterMovement()->MaxWalkSpeed = 200.f;
-	GetCharacterMovement()->bOrientRotationToMovement = true;//方向转至移动角度
+	GetCharacterMovement()->MaxWalkSpeed = 600.f;
+	GetCharacterMovement()->bOrientRotationToMovement = false;//方向转至移动角度
 	GetCharacterMovement()->NavAgentProps.bCanCrouch = true;//允许蹲下
 	GetCharacterMovement()->SetCrouchedHalfHeight(60.0f);//蹲下目标大小
 	GetCharacterMovement()->MaxWalkSpeedCrouched = 200.0f;//蹲下最大移动速度
@@ -85,13 +92,54 @@ AYuanZuCharacterBase::AYuanZuCharacterBase()
 
 }
 
+void AYuanZuCharacterBase::BeginPlay()
+{
+	Super::BeginPlay();
+	if (AmmoMesh)
+	{
+		AmmoMesh->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, FName("ReloadSocket"));
+	}
+
+	if (CameraBoom)
+	{
+		DefaultTargetArmLength = CameraBoom->TargetArmLength;//设置默认弹簧臂长度
+		DefaultCameraBoomSocketOffset = CameraBoom->SocketOffset;//设置默认摄像机偏移
+		DefaultCameraBoomRelativeLocation = CameraBoom->GetRelativeLocation();//设置默认弹簧臂位置
+		TargetCameraLocation = DefaultCameraBoomRelativeLocation.Z;
+		TargetCrouchArmLength = DefaultTargetArmLength;
+	}
+
+	if (WalkRetardance && WalkingTimeline)
+	{
+		OnRunWalkTimelineUpdateDelegate.BindUFunction(this, FName("OnRunWalkTimelineUpdate"));
+		WalkingTimeline->AddInterpFloat(WalkRetardance, OnRunWalkTimelineUpdateDelegate);
+	}
+	if (SwimRetardance && SwimTimeline)
+	{
+		OnSwimTimelineUpdateDelegate.BindUFunction(this, FName("OnSwimTimelineUpdate"));
+		SwimTimeline->AddInterpFloat(SwimRetardance, OnSwimTimelineUpdateDelegate);
+
+	}
+	UpdateHealth();
+	if (HasAuthority())
+	{
+		OnTakeAnyDamage.AddDynamic(this, &AYuanZuCharacterBase::SetDemage);
+	}
+	AYuanZuPlayerState* YuanZuPS = GetPlayerState<AYuanZuPlayerState>();
+	if (YuanZuPS)
+	{
+		SetCharacterMaterial(YuanZuPS->GetTeamType());
+	}
+	AddAttackAnimName();
+}
+
 void AYuanZuCharacterBase::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
 	AimOffset(DeltaTime);
-	SetCameraLocation(DeltaTime);
 
+	SetCameraLocation(DeltaTime);
 }
 
 void AYuanZuCharacterBase::Destroyed()
@@ -111,14 +159,8 @@ void AYuanZuCharacterBase::OnRep_PlayerState()
 	AYuanZuPlayerState* YuanZuPS = GetPlayerState<AYuanZuPlayerState>();
 	if (YuanZuPS)
 	{
-		SetCharacterMaterila(YuanZuPS->GetTeamType());
+		SetCharacterMaterial(YuanZuPS->GetTeamType());
 	}
-}
-
-void AYuanZuCharacterBase::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
-{
-	Super::SetupPlayerInputComponent(PlayerInputComponent);
-
 }
 
 //获取终身重复使用的道具
@@ -132,7 +174,8 @@ void AYuanZuCharacterBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 	//COND_OwnerOnly：此属性仅能发送给该角色的所有者
 	//仅让触发重叠的玩家显示Widget
 	DOREPLIFETIME_CONDITION(AYuanZuCharacterBase, OverlappingWeapon, COND_OwnerOnly);//网络复制
-	DOREPLIFETIME(AYuanZuCharacterBase, bIsRunning);
+	DOREPLIFETIME_CONDITION(AYuanZuCharacterBase, OverlappingItem, COND_OwnerOnly);//网络复制
+	DOREPLIFETIME(AYuanZuCharacterBase, bIsWalking);
 	DOREPLIFETIME(AYuanZuCharacterBase, bIsSwimming);
 	DOREPLIFETIME(AYuanZuCharacterBase, TurningInPlace);
 	DOREPLIFETIME(AYuanZuCharacterBase, CurrentHealth);
@@ -149,59 +192,62 @@ void AYuanZuCharacterBase::PostInitializeComponents()
 	}
 }
 
-void AYuanZuCharacterBase::Crouch(bool bClientSimulation)
+void AYuanZuCharacterBase::OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
 {
-	Super::Crouch(bClientSimulation);
+	Super::OnStartCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
 
 	if (!CameraBoom)return;
 
+	TargetCrouchArmLength = CrouchArmLength;
 	TargetCameraLocation = CrouchCameraLocation;
+
+	if (CrouchSound && GetNetMode() != NM_DedicatedServer)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, CrouchSound, GetActorLocation());
+	}
 }
 
-void AYuanZuCharacterBase::UnCrouch(bool bClientSimulation)
+void AYuanZuCharacterBase::OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
 {
-	Super::UnCrouch(bClientSimulation);
+	Super::OnEndCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
 
 	if (!CameraBoom)return;
+	TargetCrouchArmLength = DefaultTargetArmLength;
+	TargetCameraLocation = DefaultCameraBoomRelativeLocation.Z;
 
-	TargetCameraLocation = StandCameraLocation;
+	if (UnCrouchSound && GetNetMode() != NM_DedicatedServer)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, UnCrouchSound, GetActorLocation());
+	}
 }
 
-void AYuanZuCharacterBase::BeginPlay()
+void AYuanZuCharacterBase::Jump()
 {
-	Super::BeginPlay();
+	Super::Jump();
+}
 
-	if (AmmoMesh)
-	{
-		AmmoMesh->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, FName("ReloadSocket"));
-	}
+void AYuanZuCharacterBase::StopJumping()
+{
+	Super::StopJumping();
+}
 
-	if (CameraBoom)
-	{
-		TargetCameraLocation = StandCameraLocation;
-	}
+void AYuanZuCharacterBase::SetCameraLocation(float DeltaTime)
+{
+	if (!CameraBoom) return;
+	float ArmLength = CameraBoom->TargetArmLength;
+	FVector Offset = CameraBoom->GetRelativeLocation();
+	Offset.Z = FMath::FInterpTo(Offset.Z, TargetCameraLocation, DeltaTime, CrouchInterpSpeed);
+	ArmLength = FMath::FInterpTo(ArmLength, TargetCrouchArmLength, DeltaTime, CrouchInterpSpeed);
+	CameraBoom->TargetArmLength = ArmLength;
+	CameraBoom->SetRelativeLocation(Offset);
+}
 
-	if (RunningRetardance && RunningTimeline)
-	{
-		OnWalkRunTimelineUpdateDelegate.BindUFunction(this, FName("OnWalkRunTimelineUpdate"));
-		RunningTimeline->AddInterpFloat(RunningRetardance, OnWalkRunTimelineUpdateDelegate);
-	}
-	if (SwimRetardance && SwimTimeline)
-	{
-		OnSwimTimelineUpdateDelegate.BindUFunction(this, FName("OnSwimTimelineUpdate"));
-		SwimTimeline->AddInterpFloat(SwimRetardance, OnSwimTimelineUpdateDelegate);
-
-	}
-	UpdateHealth();
-	if (HasAuthority())
-	{
-		OnTakeAnyDamage.AddDynamic(this, &AYuanZuCharacterBase::SetDemage);
-	}
-	AYuanZuPlayerState* YuanZuPS = GetPlayerState<AYuanZuPlayerState>();
-	if (YuanZuPS)
-	{
-		SetCharacterMaterila(YuanZuPS->GetTeamType());
-	}
+void AYuanZuCharacterBase::AddAttackAnimName()
+{
+	AttackName.Add(FName(TEXT("Attack_L")));
+	AttackName.Add(FName(TEXT("Attack_R")));
+	AttackName.Add(FName(TEXT("Whack_L")));
+	AttackName.Add(FName(TEXT("Whack_R")));
 }
 
 void AYuanZuCharacterBase::OnRep_OverlappingWidget(AYuanZuWeapon* LastWeapon)
@@ -218,11 +264,11 @@ void AYuanZuCharacterBase::OnRep_OverlappingWidget(AYuanZuWeapon* LastWeapon)
 }
 
 
-void AYuanZuCharacterBase::OnWalkRunTimelineUpdate(float Alpha)
+void AYuanZuCharacterBase::OnRunWalkTimelineUpdate(float Alpha)
 {
-	if (RunningRetardance && GetCharacterMovement() && !bIsCrouched)
+	if (WalkRetardance && GetCharacterMovement() && !bIsCrouched)
 	{
-		if (Combat->EquippedWeapon)
+		if (Combat && Combat->EquippedWeapon)
 		{
 			int32 DefaultSpeed;
 			int32 EquipHJTSpeed;
@@ -230,26 +276,24 @@ void AYuanZuCharacterBase::OnWalkRunTimelineUpdate(float Alpha)
 			switch (GetWeaponType())
 			{
 			default:
-				DefaultSpeed = FMath::Lerp(300.0f, 600.0f, Alpha);
+				DefaultSpeed = FMath::Lerp(600.f, 300.f, Alpha);
 				GetCharacterMovement()->MaxWalkSpeed = DefaultSpeed;
 				UE_LOG(LogYuanZu, Warning, TEXT("EquipTJBQSpeed[%d]"), DefaultSpeed);
 				break;
 			case EWeaponType::EWT_HJT:
-				EquipHJTSpeed = FMath::Lerp(300.0f, 450.0f, Alpha);
+				EquipHJTSpeed = FMath::Lerp(450.f, 300.f, Alpha);
 				GetCharacterMovement()->MaxWalkSpeed = EquipHJTSpeed;
 				UE_LOG(LogYuanZu, Warning, TEXT("EquipHJTSpeed[%d]"), EquipHJTSpeed);
 				break;
 			}
 		}
-		else
+		else if(Combat)
 		{
 			//计算目标速度
-			float TargetSpeed = FMath::Lerp(300.0f, 600.0f, Alpha);
+			float TargetSpeed = FMath::Lerp(600.f, 300.f, Alpha);
 			GetCharacterMovement()->MaxWalkSpeed = TargetSpeed;
 		}
-		
 	}
-
 }
 
 void AYuanZuCharacterBase::AimOffset(float DeltaTime)
@@ -287,8 +331,6 @@ void AYuanZuCharacterBase::AimOffset(float DeltaTime)
 		{
 			InterpAO_Yaw = AO_Yaw;
 		}
-
-		bUseControllerRotationYaw = true;//使用控制器旋转
 		TurnInPlace(DeltaTime);
 	}
 
@@ -299,7 +341,6 @@ void AYuanZuCharacterBase::AimOffset(float DeltaTime)
 
 		StartAimRotation = FRotator(0.f, AimYaw, 0.f);
 		AO_Yaw = 0.f;
-		bUseControllerRotationYaw = true;//使用控制器旋转
 		TurningInPlace = ETurningInPlace::ETIP_NotTurnin;
 	}
 
@@ -417,35 +458,35 @@ void AYuanZuCharacterBase::TurnInPlace(float DeltaTime)
 
 }
 
-void AYuanZuCharacterBase::ServerPlayRunTimeline_Implementation()
+void AYuanZuCharacterBase::ServerPlayWalkTimeline_Implementation()
 {
-	if (RunningTimeline)
+	if (WalkingTimeline)
 	{
-		RunningTimeline->Play();
+		WalkingTimeline->Play();
 
-		UE_LOG(LogYuanZu, Warning, TEXT("Running"));
+		UE_LOG(LogYuanZu, Warning, TEXT("Walking"));
 	}
 }
 
-void AYuanZuCharacterBase::ServerReverseRunTimeline_Implementation()
+void AYuanZuCharacterBase::ServerReverseWalkTimeline_Implementation()
 {
-	if (RunningTimeline)
+	if (WalkingTimeline)
 	{
-		RunningTimeline->Reverse();
+		WalkingTimeline->Reverse();
 	}
 }
 
-void AYuanZuCharacterBase::OnRep_IsRunning()
+void AYuanZuCharacterBase::OnRep_IsWalking()
 {
-	if (RunningTimeline)
+	if (WalkingTimeline)
 	{
-		if (bIsRunning)
+		if (bIsWalking)
 		{
-			RunningTimeline->Play();
+			WalkingTimeline->Play();
 		}
 		else
 		{
-			RunningTimeline->Reverse();
+			WalkingTimeline->Reverse();
 		}
 	}
 }
@@ -557,7 +598,6 @@ void AYuanZuCharacterBase::Move(const FInputActionValue& Value)
 	{
 		if (IsSwimming())
 		{
-			bUseControllerRotationYaw = true;//使用控制器旋转
 			FVector SwimForwardVector = UKismetMathLibrary::GetForwardVector(GetControlRotation());
 			AddMovementInput(SwimForwardVector, MoveVector.Size());
 
@@ -606,6 +646,24 @@ void AYuanZuCharacterBase::SetOverlappingWeapon(AYuanZuWeapon* Weapon)
 	}
 }
 
+void AYuanZuCharacterBase::SetOVerlappingItem(AYuanZuPickupItem* Item)
+{
+
+	if (OverlappingItem)
+	{
+		OverlappingItem->ShowItemWidget(false);
+	}
+	OverlappingItem = Item;
+	if(IsLocallyControlled())
+	{
+		if (OverlappingItem)
+		{
+			OverlappingItem->ShowItemWidget(true);
+		}
+	}
+
+}
+
 bool AYuanZuCharacterBase::IsWeaponEquipped()
 {
 	return (Combat && Combat->EquippedWeapon);
@@ -616,34 +674,34 @@ bool AYuanZuCharacterBase::GetIsAiming()
 	return (Combat && Combat->bAiming);
 }
 
-void AYuanZuCharacterBase::StartRun()
+void AYuanZuCharacterBase::StartWalk()
 {
-	bIsRunning = true;
+	bIsWalking = true;
 
-	if (RunningTimeline && bIsRunning)
+	if (WalkingTimeline && bIsWalking)
 	{
-		RunningTimeline->Play();
+		WalkingTimeline->Play();
 	}
 
 	if (!HasAuthority())
 	{
-		ServerPlayRunTimeline();
+		ServerPlayWalkTimeline();
 	}
 
 }
 
-void AYuanZuCharacterBase::StopRun()
+void AYuanZuCharacterBase::StopWalk()
 {
-	bIsRunning = false;
+	bIsWalking = false;
 
-	if (RunningTimeline && !bIsRunning)
+	if (WalkingTimeline && !bIsWalking)
 	{
-		RunningTimeline->Reverse();
+		WalkingTimeline->Reverse();
 	}
 
 	if (!HasAuthority())
 	{
-		ServerReverseRunTimeline();
+		ServerReverseWalkTimeline();
 	}
 }
 
@@ -654,8 +712,6 @@ bool AYuanZuCharacterBase::IsSwimming()
 
 void AYuanZuCharacterBase::SwimState()
 {
-	bUseControllerRotationYaw = true;
-
 	LaunchCharacter(GetActorUpVector() * 2.f, false, false);
 	GetCharacterMovement()->GetPhysicsVolume()->bWaterVolume = true;
 }
@@ -664,15 +720,6 @@ void AYuanZuCharacterBase::EndSwimState()
 {
 	GetCharacterMovement()->SetMovementMode(EMovementMode::MOVE_Walking);
 	GetCharacterMovement()->GetPhysicsVolume()->bWaterVolume = false;
-
-	if (Combat->EquippedWeapon)
-	{
-		bUseControllerRotationYaw = true;
-	}
-	else
-	{
-		bUseControllerRotationYaw = false;
-	}
 }
 
 void AYuanZuCharacterBase::StartSwim()
@@ -713,7 +760,20 @@ void AYuanZuCharacterBase::FireButtonPressed()
 {
 	if (Combat && Combat->EquippedWeapon)
 	{
-		Combat->StartFire();
+		if (Combat->EquippedWeapon->GetWeaponType() == EWeaponType::EWT_SLD &&
+			Combat->bCanThrow &&
+			Combat->EquippedWeapon->GetAmmo() > 0)
+		{
+			Combat->StartLift();
+		}
+		else if(Combat->EquippedWeapon->GetWeaponType() != EWeaponType::EWT_SLD)
+		{
+			Combat->StartFire();
+		}
+	}
+	else if(Combat)
+	{
+		Combat->StartAttack();
 	}
 }
 
@@ -721,7 +781,15 @@ void AYuanZuCharacterBase::FireButtonReleased()
 {
 	if (Combat && Combat->EquippedWeapon)
 	{
-		Combat->StopFire();
+		if (Combat->EquippedWeapon->GetWeaponType() == EWeaponType::EWT_SLD && GetIsLift() && Combat->EquippedWeapon->GetAmmo() > 0)
+		{
+			Combat->SetThrow(true);
+		}
+		else
+		{
+			Combat->StopFire();
+		}
+
 	}
 }
 
@@ -746,81 +814,113 @@ FName AYuanZuCharacterBase::SelectFireMontageName(bool bAimming)
 	return FName();
 }
 
-void AYuanZuCharacterBase::PlayFireMontage(bool bAimming)
+FName AYuanZuCharacterBase::SelectThrowMontageName(bool bHighThrow)
 {
-	if (Combat == nullptr || Combat->EquippedWeapon == nullptr || FireWeaponMontage.IsEmpty())return;
-
-	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
-
-	if (AnimInstance)
+	if (bIsCrouched)
 	{
-		//遍历换弹蒙太奇的索引是否有效
-		for (int32 i = 0; i < FireWeaponMontage.Num(); i++)
+		if (bHighThrow)
 		{
-			if (FireWeaponMontage.IsValidIndex(i))
-			{
-				UE_LOG(LogYuanZu, Warning, TEXT("FireWeaponMontage [%d] Index Valid!"), i);
-			}
+			UE_LOG(LogYuanZu, Warning, TEXT("Crouch_H"));
+			return FName("Crouch_H");
 		}
-
-		switch (GetWeaponType())
+		else
 		{
-		case EWeaponType::EWT_TJBQ:
-			AnimInstance->Montage_Play(FireWeaponMontage[0]);
-			AnimInstance->Montage_JumpToSection(SelectFireMontageName(bAimming), FireWeaponMontage[0]);
-			break;
-		case EWeaponType::EWT_HJT:
-			AnimInstance->Montage_Play(FireWeaponMontage[1]);
-			AnimInstance->Montage_JumpToSection(SelectFireMontageName(), FireWeaponMontage[1]);
-			break;
-		case EWeaponType::EWT_SQ:
-			AnimInstance->Montage_Play(FireWeaponMontage[2]);
-			AnimInstance->Montage_JumpToSection(SelectFireMontageName(), FireWeaponMontage[2]);
-			break;
-		case EWeaponType::EWT_JJBQ:
-			AnimInstance->Montage_Play(FireWeaponMontage[3]);
-			AnimInstance->Montage_JumpToSection(SelectFireMontageName(), FireWeaponMontage[3]);
-			break;
+			UE_LOG(LogYuanZu, Warning, TEXT("Crouch_L"));
+			return FName("Crouch_L");
 		}
 	}
+	else
+	{
+		if (bHighThrow)
+		{
+			UE_LOG(LogYuanZu, Warning, TEXT("Stand_H"));
+			return FName("Stand_H");
+		}
+		else
+		{
+			UE_LOG(LogYuanZu, Warning, TEXT("Stand_L"));
+			return FName("Stand_L");
+		}
+	}
+	return FName();
 }
 
-void AYuanZuCharacterBase::PlayReloadMontage()
+FName AYuanZuCharacterBase::SelectPullBoltMontageName()
 {
-	if (!Combat || !Combat->EquippedWeapon || ReloadMontage.IsEmpty())return;
+	if (bIsCrouched)
+	{
+		return FName("Crouch");
+	}
+	else
+	{
+		return FName("Stand");
+	}
+	return FName();
+}
+
+void AYuanZuCharacterBase::PlayFireMontage(bool bAimming)
+{
+	if (Combat == nullptr || !Combat->EquippedWeapon || FireWeaponMontage.IsEmpty())return;
 
 	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
+	if (!AnimInstance)return;
 
-	if (AnimInstance)
+	//将查询到的Key的动画蒙太奇返回给Montage
+	UAnimMontage* Montage = FireWeaponMontage.FindRef(GetWeaponType());
+	if (!Montage)return;
+
+	AnimInstance->Montage_Play(Montage);
+	AnimInstance->Montage_JumpToSection(SelectFireMontageName(bAimming), Montage);
+}
+
+void AYuanZuCharacterBase::PlayPullBoltMontage()
+{
+	if (Combat == nullptr || !Combat->EquippedWeapon || !PullBoltMontage)return;
+
+	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
+	if (!AnimInstance)return;
+
+	AnimInstance->Montage_Play(PullBoltMontage);
+	AnimInstance->Montage_JumpToSection(SelectPullBoltMontageName(), PullBoltMontage);
+}
+
+void AYuanZuCharacterBase::PlayAntitankFireMontage(bool bHighThrow)
+{
+	if (Combat == nullptr || !Combat->EquippedWeapon || FireWeaponMontage.IsEmpty())return;
+
+	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
+	if (!AnimInstance)return;
+
+	//将查询到的Key的动画蒙太奇返回给Montage
+	UAnimMontage* Montage = FireWeaponMontage.FindRef(GetWeaponType());
+	if (!Montage)return;
+
+	AnimInstance->Montage_Play(Montage);
+	AnimInstance->Montage_JumpToSection(SelectThrowMontageName(bHighThrow), Montage);
+}
+
+void AYuanZuCharacterBase::PlayReloadMontage(bool bAimming)
+{
+	if (!Combat || !Combat->EquippedWeapon || ReloadMontage.IsEmpty() || !LDQReloadMontage)return;
+
+	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
+	if (!AnimInstance)return;
+	
+	EAmmoType AT = Combat->EquippedWeapon->GetAmmoType();
+
+	//将查询到的Key的动画蒙太奇返回给Montage
+	UAnimMontage* Montage = ReloadMontage.FindRef(GetWeaponType());
+	if (!Montage)return;
+
+	if (AT == EAmmoType::EAT_40MM)
 	{
-		//遍历换弹蒙太奇的索引是否有效
-		for (int32 i = 0; i < ReloadMontage.Num(); i++)
-		{
-			if (ReloadMontage.IsValidIndex(i))
-			{
-				UE_LOG(LogYuanZu, Warning, TEXT("ReloadMontage [%d] Index Valid!"), i);
-			}
-		}
-
-		switch (GetWeaponType())
-		{
-		case EWeaponType::EWT_TJBQ:
-			AnimInstance->Montage_Play(ReloadMontage[0]);
-			AnimInstance->Montage_JumpToSection(SelectReloadMontageName(), ReloadMontage[0]);
-			break;
-		case EWeaponType::EWT_HJT:
-			AnimInstance->Montage_Play(ReloadMontage[1]);
-			AnimInstance->Montage_JumpToSection(SelectReloadMontageName(), ReloadMontage[1]);
-			break;
-		case EWeaponType::EWT_SQ:
-			AnimInstance->Montage_Play(ReloadMontage[2]);
-			AnimInstance->Montage_JumpToSection(SelectReloadMontageName(), ReloadMontage[2]);
-			break;
-		case EWeaponType::EWT_JJBQ:
-			AnimInstance->Montage_Play(ReloadMontage[3]);
-			AnimInstance->Montage_JumpToSection(SelectReloadMontageName(), ReloadMontage[3]);
-			break;
-		}
+		AnimInstance->Montage_Play(LDQReloadMontage);
+		AnimInstance->Montage_JumpToSection(SelectReloadMontageName(bAimming), LDQReloadMontage);
+	}
+	else
+	{
+		AnimInstance->Montage_Play(Montage);
+		AnimInstance->Montage_JumpToSection(SelectReloadMontageName(bAimming), Montage);
 	}
 	
 }
@@ -849,67 +949,172 @@ FName AYuanZuCharacterBase::SelectReloadMontageName(bool bAimming)
 	}
 }
 
-void AYuanZuCharacterBase::SetCameraLocation(float DeltaTime)
+FName AYuanZuCharacterBase::SelectAttackMontageName()
 {
-	if (!CameraBoom) return;
-
-	FVector Offset = CameraBoom->GetRelativeLocation();
-	Offset.Z = FMath::FInterpTo(Offset.Z, TargetCameraLocation, DeltaTime, CrouchInterpSpeed);
-	CameraBoom->SetRelativeLocation(Offset);
+	for (int32 i = 0; i <= AttackName.Num(); i++)
+	{
+		if (AttackName.IsValidIndex(i))
+		{
+			if (GetCharacterMovement()->IsFalling())
+			{
+				int32 JumpAttack = FMath::RandRange(2, 3);
+				return AttackName[JumpAttack];
+			}
+			else
+			{
+				int32 Attack = FMath::RandRange(0, 1);
+				return AttackName[Attack];
+			}
+		}
+		else
+		{
+			return FName();
+		}
+	}
+	return FName();
 }
 
-void AYuanZuCharacterBase::SetCharacterMaterila(ETeamType InTeamType)
+void AYuanZuCharacterBase::PlayAttackMontage()
 {
-	if (!GetMesh() || TeamCharacterMaterial.Num() < 8)return;
+	if (!Combat || Combat->EquippedWeapon || !AttackMontage)return;
 
-		switch (InTeamType)
+	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
+	if (AnimInstance)
+	{
+		if (!AnimInstance->Montage_IsPlaying(AttackMontage))
 		{
-		case ETeamType::ETT_Red:
-			GetMesh()->SetMaterial(1, TeamCharacterMaterial[0]);
-			GetMesh()->SetMaterial(2, TeamCharacterMaterial[1]);
-			GetMesh()->SetMaterial(3, TeamCharacterMaterial[2]);
-			GetMesh()->SetMaterial(7, TeamCharacterMaterial[3]);
-			UE_LOG(LogYuanZu, Warning, TEXT("ETT_Red"));
-			break;
-		case ETeamType::ETT_Blue:
-			GetMesh()->SetMaterial(1, TeamCharacterMaterial[4]);
-			GetMesh()->SetMaterial(2, TeamCharacterMaterial[5]);
-			GetMesh()->SetMaterial(3, TeamCharacterMaterial[6]);
-			GetMesh()->SetMaterial(7, TeamCharacterMaterial[7]);
-			UE_LOG(LogYuanZu, Warning, TEXT("ETT_Red"));
-			break;
-		case ETeamType::ETT_None:
-		default:
-			break;
+			AnimInstance->Montage_Play(AttackMontage);
+			AnimInstance->Montage_JumpToSection(SelectAttackMontageName(), AttackMontage);
 		}
+	}
+}
+
+bool AYuanZuCharacterBase::PerformUnarmedAttackSweep()
+{
+	if (!HasAuthority() || !GetWorld())
+	{
+		//如果不是服务器执行就返回
+		return false;
+	}
+
+	FHitResult HitResult;
+	FCollisionQueryParams QueryParams(FName(TEXT("UnarmedAttackSweep")), false, this);
+
+	//射线起点
+	const FVector Start = GetActorLocation() + FVector(0.f, 0.f, 50.f);
+	//射线终点
+	const FVector End = Start + GetActorForwardVector() * AttackTraceDistance;
+	//球形检测
+	const FCollisionShape AttackShape = FCollisionShape::MakeSphere(AttackTraceRadius);//攻击形态
+
+	//检查是否打中了
+	const bool bHit = GetWorld()->SweepSingleByChannel(HitResult, Start, End, FQuat::Identity, ECC_Pawn, AttackShape, QueryParams);
+
+	AActor* HitActor = HitResult.GetActor();
+	if (!bHit || !HitActor || HitActor == this)
+	{
+		//没打中和打中自己则无效
+		return false;
+	}
+
+	ApplyUnarmedAttackDamage(HitActor);
+	return true;
+}
+
+//施加徒手攻击伤害
+void AYuanZuCharacterBase::ApplyUnarmedAttackDamage(AActor* OtherActor)
+{
+	if (!HasAuthority() || !OtherActor || OtherActor == this)
+	{
+		//如果不是服务器执行、没打到人、攻击到的人是自己就返回
+		return;
+	}
+
+	AController* OwnerController = GetController();
+	if (OwnerController == nullptr)
+	{
+		return;
+	}
+
+	UGameplayStatics::ApplyDamage(OtherActor, AttackDamage, OwnerController, this, UDamageType::StaticClass());
+
+	AYuanZuCharacterBase* Character = Cast<AYuanZuCharacterBase>(OtherActor);
+	if (Character)
+	{
+		Character->MulticastHit();
+	}
+}
+
+void AYuanZuCharacterBase::SetAttackVaild(bool bIsVaild)
+{
+	if (!HasAuthority()) return;
+
+	if (bIsVaild)
+	{
+		UE_LOG(LogYuanZu, Warning, TEXT("打人有效"));
+		if (!bAttackDamageApplied)
+		{
+			//打中人且打中的不是自己
+			bAttackDamageApplied = PerformUnarmedAttackSweep();
+		}
+	}
+	else
+	{
+		UE_LOG(LogYuanZu, Warning, TEXT("打人无效"));
+		bAttackDamageApplied = false;
+	}
+}
+
+void AYuanZuCharacterBase::SetCharacterMaterial(ETeamType InTeamType)
+{
+	if (!GetMesh() || TeamMaterial.IsEmpty())return;
+
+	const FTeamMaterial* FoundTeamMaterial = TeamMaterial.Find(InTeamType);
+	if (!FoundTeamMaterial) return;
+
+	const int32 MaterialSlots[] = { 1, 2, 3, 7 };
+
+	//如果材质的数量小于材质插槽的数量就返回
+	if (FoundTeamMaterial->Materials.Num() < UE_ARRAY_COUNT(MaterialSlots)) return;
+
+	//i的循环次数小于插槽数量
+	for (int32 i = 0; i < UE_ARRAY_COUNT(MaterialSlots); ++i)
+	{
+		//检查材质的i索引是否有效
+		if (FoundTeamMaterial->Materials[i])
+		{
+			// i = 0 就是MaterialSlots的第一个元素 以此类推
+			GetMesh()->SetMaterial(MaterialSlots[i], FoundTeamMaterial->Materials[i]);
+		}
+	}
+}
+
+void AYuanZuCharacterBase::SetJJBQAim(AYuanZuWeapon* InWeapon, bool bIsAimming)
+{
+	if (!InWeapon || InWeapon->GetWeaponType() != EWeaponType::EWT_JJBQ)return;
+
+	AYuanZuSnipeProjectileWeapon* SnipeProjectileWeapon = Cast<AYuanZuSnipeProjectileWeapon>(InWeapon);
+	if (SnipeProjectileWeapon)
+	{
+		SnipeProjectileWeapon->OpenScope(bIsAimming);
+	}
 }
 
 void AYuanZuCharacterBase::SetAmmoType(AYuanZuWeapon* InWeapon)
 {
 	if (!InWeapon)return;
 
-	switch (InWeapon->GetWeaponType())
-	{
-	case EWeaponType::EWT_TJBQ:
-		AmmoMesh->SetStaticMesh(InWeapon->AmmoTypeMesh);
-		break;
-	case EWeaponType::EWT_HJT:
-		AmmoMesh->SetStaticMesh(InWeapon->AmmoTypeMesh);
-		break;
-	case EWeaponType::EWT_SQ:
-		AmmoMesh->SetStaticMesh(InWeapon->AmmoTypeMesh);
-		break;
-	case EWeaponType::EWT_JJBQ:
-		AmmoMesh->SetStaticMesh(InWeapon->AmmoTypeMesh);
-		break;
-	}
+	AmmoMesh->SetStaticMesh(InWeapon->AmmoTypeMesh);
 }
 
 void AYuanZuCharacterBase::StopFireMontage()
 {
-	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
+	if (AnimInstance && !FireWeaponMontage.IsEmpty())
 	{
-		AnimInstance->Montage_Stop(0.1f, FireWeaponMontage[0]);
+		UAnimMontage* Montage = FireWeaponMontage.FindRef(GetWeaponType());
+		if (!Montage)return;
+		AnimInstance->Montage_Stop(0.1f, Montage);
 	}
 }
 
@@ -918,31 +1123,34 @@ bool AYuanZuCharacterBase::GetIsFire()
 	return Combat && Combat->bFire;
 }
 
-void AYuanZuCharacterBase::PlayHitReactMontage(bool bIsHit)
+void AYuanZuCharacterBase::PlayHitReactMontage()
 {
-	if (Combat)
+	if (!Combat || Combat->EquippedWeapon || !HitReactMontage) return;
+
+	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
+	if (AnimInstance)
 	{
-		UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
-		if (HitReactMontage && AnimInstance)
-		{
-			if (Combat->EquippedWeapon)
-			{
-				AnimInstance->Montage_Play(HitReactMontage);
-				AnimInstance->Montage_JumpToSection(TEXT("Front"));
-				UE_LOG(LogYuanZu, Warning, TEXT("Front"));
-			}
-			else
-			{
-				AnimInstance->Montage_Play(HitReactMontage_NoWeapon);
-				UE_LOG(LogYuanZu, Warning, TEXT("NoWeapon"));
-			}
-		}
+		AnimInstance->Montage_Play(HitReactMontage);
+		UE_LOG(LogYuanZu, Warning, TEXT("HitReact"));
 	}
 }
 
 void AYuanZuCharacterBase::OnRep_CurrentHealth()
 {
 	UpdateHealth();
+}
+
+void AYuanZuCharacterBase::OnRep_OverlappingItem(AYuanZuPickupItem* LastWeapon)
+{
+	if (LastWeapon)
+	{
+		LastWeapon->ShowItemWidget(false);
+	}
+
+	if (OverlappingItem && IsLocallyControlled())
+	{
+		OverlappingItem->ShowItemWidget(true);
+	}
 }
 
 void AYuanZuCharacterBase::UpdateHealth()
@@ -963,6 +1171,11 @@ void AYuanZuCharacterBase::OnSwimTimelineUpdate(float Alpha)
 		float TargetSpeed = FMath::Lerp(0.f, 300.f, Alpha);
 		GetCharacterMovement()->MaxSwimSpeed = TargetSpeed;
 	}
+}
+
+void AYuanZuCharacterBase::MulticastHit_Implementation()
+{
+	PlayHitReactMontage();
 }
 
 AYuanZuWeapon* AYuanZuCharacterBase::GetEquippedWeapon()const
@@ -993,9 +1206,27 @@ EWeaponType AYuanZuCharacterBase::GetWeaponType()const
 	return EWeaponType();
 }
 
+bool AYuanZuCharacterBase::GetIsLift()const
+{
+	if (Combat && Combat->EquippedWeapon)
+	{
+		return Combat->GetIsLift();
+	}
+	return false;
+}
+
+bool AYuanZuCharacterBase::GetIsHighThrow() const
+{
+	if (Combat && Combat->EquippedWeapon)
+	{
+		return Combat->GetIsHighThrow();
+	}
+	return false;
+}
+
 void AYuanZuCharacterBase::UpdateAmmo()
 {
-	if (Combat == nullptr) return;
+	if (!Combat) return;
 
 	Combat->UpdateAmmoCount();
 }

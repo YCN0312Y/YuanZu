@@ -6,15 +6,16 @@
 #include "GameFramework/Character.h"
 #include "Components/TimelineComponent.h"
 #include "Animation/Rests/YuanZuTurningInPlace.h"
-#include "Interfaces/YuanZuInterctWithCrosshairsInterface.h"
 #include "UI/Lobby/Rests/YuanZuTeamSlotInfo.h"
+#include "Weapons/Rests/YuanZuWeaponTypes.h"
+#include "Actor/Rests/YuanZuTeamMaterial.h"
+#include "Components/Rests/YuanZuCombatState.h"
 #include "YuanZuCharacterBase.generated.h"
 
 class USpringArmComponent;
 class UCameraComponent;
 class UWidgetComponent;
 class UYuanZuCombatComponent;
-class USoundBase;
 class UBoxComponent;
 class UAnimMontage;
 class AYuanZuWeapon;
@@ -24,37 +25,38 @@ class AController;
 class AYuanZuPlayerController;
 class AYuanZuPlayerState;
 class UMaterialInterface;
+class USphereComponent;
+class USoundCue;
+class USplineComponent;
+class USplineMeshComponent;
+class UDecalComponent;
+class AYuanZuPickupItem;
 
 struct FInputActionValue;
 struct FTimerHandle;
+struct FPredictProjectilePathPointData;
 
 UCLASS()
-class YUANZU_API AYuanZuCharacterBase : public ACharacter, public IYuanZuInterctWithCrosshairsInterface
+class YUANZU_API AYuanZuCharacterBase : public ACharacter
 {
 	GENERATED_BODY()
 
 public:
-	// Sets default values for this character's properties
 	AYuanZuCharacterBase();
 
-	// Called every frame
+public:
 	virtual void Tick(float DeltaTime) override;
-
 	virtual void Destroyed() override;
 	virtual void OnRep_PlayerState()override;
-
-	// Called to bind functionality to input
-	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	//网络复制
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	//组件初始化后操作
 	virtual void PostInitializeComponents() override;
-
-	virtual void Crouch(bool bClientSimulation = false)override;
-	virtual void UnCrouch(bool bClientSimulation = false)override;
-
+	virtual void OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
+	virtual void OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
+	virtual void Jump() override;
+	virtual void StopJumping() override;
 protected:
-	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
 
 public:
@@ -74,44 +76,63 @@ private:
 	*/
 	//弹簧臂
 	UPROPERTY(VisibleAnywhere, Category = "YuanZu|Camera")
-	USpringArmComponent* CameraBoom;
+	TObjectPtr<USpringArmComponent>CameraBoom;
 	//摄像机
 	UPROPERTY(VisibleAnywhere, Category = "YuanZu|Camera")
-	UCameraComponent* Camera;
-	//头顶小部件
-	//UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "YuanZu|Widget", meta = (AllowPrivateAccess = "true"))
-	//UWidgetComponent* OverHeadWidget;//头顶小部件
+	TObjectPtr<UCameraComponent>Camera;
 	//战斗组件
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UYuanZuCombatComponent>Combat;
+	//左手
 	UPROPERTY(VisibleAnywhere, meta = (AllowPrivateAccess = "true"))
-	UYuanZuCombatComponent* Combat;
+	TObjectPtr<USphereComponent>LeftHandAttack;
+	//右手
+	UPROPERTY(VisibleAnywhere, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USphereComponent>RightHandAttack;
 
 	/*
 	* 蒙太奇
 	*/
 	//开火动画蒙太奇
 	UPROPERTY(EditAnywhere, Category = "YuanZu|Animation")
-	TArray<UAnimMontage*> FireWeaponMontage;
+	TMap<EWeaponType, TObjectPtr<UAnimMontage>>FireWeaponMontage;
 	//换弹蒙太奇
 	UPROPERTY(EditAnywhere, Category = "YuanZu|Animation")
-	TArray<UAnimMontage*> ReloadMontage;
+	TMap<EWeaponType, TObjectPtr<UAnimMontage>>ReloadMontage;
+	//榴弹枪换弹
+	UPROPERTY(EditAnywhere, Category = "YuanZu|Animation")
+	TObjectPtr<UAnimMontage>LDQReloadMontage;
 	//被子弹击中蒙太奇
 	UPROPERTY(EditAnywhere, Category = "YuanZu|Animation")
-	UAnimMontage* HitReactMontage;
-	//没有武器被子弹击中蒙太奇
+	TObjectPtr<UAnimMontage>HitReactMontage;
+	//普通攻击蒙太奇
 	UPROPERTY(EditAnywhere, Category = "YuanZu|Animation")
-	UAnimMontage* HitReactMontage_NoWeapon;
+	TObjectPtr<UAnimMontage>AttackMontage;
+	//拉栓蒙太奇
+	UPROPERTY(EditAnywhere, Category = "YuanZu|Animation")
+	TObjectPtr<UAnimMontage>PullBoltMontage;
 
-	/*
-	* 网络复制变量----------
-	*/
+	//判断是否与武器重叠
 	UPROPERTY(ReplicatedUsing = OnRep_OverlappingWidget)
-	AYuanZuWeapon* OverlappingWeapon;//判断是否与武器重叠
-	UPROPERTY(ReplicatedUsing = OnRep_IsRunning)
-	bool bIsRunning;//判断是否正在跑
+	TObjectPtr<AYuanZuWeapon>OverlappingWeapon;
+	//可拾取的物品
+	UPROPERTY(ReplicatedUsing = OnRep_OverlappingItem)
+	TObjectPtr<AYuanZuPickupItem>OverlappingItem;
+	//判断是否正在跑
+	UPROPERTY(ReplicatedUsing = OnRep_IsWalking)
+	bool bIsWalking;
+	//判断是否正在游泳
 	UPROPERTY(ReplicatedUsing = OnRep_IsSwimming)
-	bool bIsSwimming;//判断是否正在游泳
+	bool bIsSwimming;
+	//玩家转向枚举
 	UPROPERTY(Replicated)
-	ETurningInPlace TurningInPlace;//玩家转向枚举
+	ETurningInPlace TurningInPlace;
+	/*
+	* 子弹
+	*/
+	//换弹模型
+	UPROPERTY(VisibleAnywhere, Category = "YuanZu|Ammo")
+	TObjectPtr<UStaticMeshComponent>AmmoMesh;
 
 	/*
 	* 瞄准偏移----------
@@ -130,24 +151,35 @@ private:
 	float LastYaw = 0.f;
 	//视角Yaw
 	float ViewYaw;
+	//抛掷物绘制线
+	UPROPERTY(VisibleAnywhere)
+	USplineComponent* ProjectileLine;
 
 	/*
-	* 蓝图使用的变量----------
+	* 摄像机
 	*/
 	//相机阈值
 	UPROPERTY(EditAnywhere, Category = "YuanZu|Camera")
 	float CameraThreshold = 200.f;
 	//蹲下和站起来之间的差值
 	UPROPERTY(EditAnywhere, Category = "YuanZu|Camera")
-	float CrouchInterpSpeed;
-	//目标设计相机位置
+	float CrouchInterpSpeed = 10;
+	//默认摄像机偏移
+	FVector DefaultCameraBoomSocketOffset = FVector(0.f, 50.f, 40.f);
+
+	//默认摄像机位置
+	FVector DefaultCameraBoomRelativeLocation = FVector::ZeroVector;
+	//目标摄像机位置
 	float TargetCameraLocation;
 	//蹲下摄像机位置
-	UPROPERTY(EditAnywhere, Category = "YuanZu|Camera")
-	float CrouchCameraLocation;
-	//站立摄像机位置
-	UPROPERTY(EditAnywhere, Category = "YuanZu|Camera")
-	float StandCameraLocation;
+	float CrouchCameraLocation = 70;
+
+	//蹲下时弹簧臂长度
+	float CrouchArmLength = 150;
+	//目标弹簧臂长度
+	float TargetCrouchArmLength;
+	//默认弹簧臂长度
+	float DefaultTargetArmLength = 200.f;
 
 	/*
 	* 玩家状态
@@ -156,7 +188,7 @@ private:
 	UPROPERTY(EditAnywhere, Category = "YuanZu|PlayerState")
 	float MaxHealth = 100.f;
 	//当前血量
-	UPROPERTY(ReplicatedUsing = OnRep_CurrentHealth, VisibleAnywhere, Category = "YuanZu|PlayerState")
+	UPROPERTY(ReplicatedUsing = OnRep_CurrentHealth)
 	float CurrentHealth = 100.f;
 	//是否已经死亡
 	UPROPERTY(Replicated)
@@ -168,37 +200,54 @@ private:
 	float RebirthDelay = 3.f;
 	//角色材质
 	UPROPERTY(EditAnywhere, Category = "YuanZu|PlayerState")
-	TArray<UMaterialInterface*> TeamCharacterMaterial;
+	TMap<ETeamType, FTeamMaterial> TeamMaterial;
 
 	/*
-	* 时间轴绑定代理----------
+	* 无武器攻击
 	*/
-	FOnTimelineFloat OnWalkRunTimelineUpdateDelegate;//从走到跑的时间轴平滑更新
-	FOnTimelineFloat OnSwimTimelineUpdateDelegate;//游泳的时间轴平滑更新
+	//普通攻击名称
+	TArray<FName>AttackName;
+	//普通攻击伤害
+	UPROPERTY(EditAnywhere, Category = "YuanZu|Attack")
+	float AttackDamage = 5.f;
+	//普通攻击检测距离
+	UPROPERTY(EditAnywhere, Category = "YuanZu|Attack")
+	float AttackTraceDistance = 75.f;
+	//普通攻击检测半径
+	UPROPERTY(EditAnywhere, Category = "YuanZu|Attack")
+	float AttackTraceRadius = 8.f;
+	//是否打中人
+	bool bAttackDamageApplied = false;
+	//左手变换
+	FTransform LeftHandTransform;
+	//右手变换
+	FTransform RightHandTransform;
+	//蹲下音效
+	UPROPERTY(EditAnywhere, Category = "YuanZu|Sound")
+	TObjectPtr<USoundCue>CrouchSound;
+	//站立音效
+	UPROPERTY(EditAnywhere, Category = "YuanZu|Sound")
+	TObjectPtr<USoundCue>UnCrouchSound;
 
-	/*
-	* 子弹
-	*/
-	//子弹模型
-	UPROPERTY(VisibleAnywhere, Category = "YuanZu|Ammo")
-	UStaticMeshComponent* AmmoMesh;
-
-protected:
 	/*
 	* 时间轴----------
 	*/
+	//从走到跑的时间轴平滑更新
+	FOnTimelineFloat OnRunWalkTimelineUpdateDelegate;
+	//游泳的时间轴平滑更新
+	FOnTimelineFloat OnSwimTimelineUpdateDelegate;
 	//跑步时间轴
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "YuanZu|Timeline")
-	UTimelineComponent* RunningTimeline;
+	UPROPERTY(VisibleAnywhere, Category = "YuanZu|Timeline")
+	TObjectPtr<UTimelineComponent>WalkingTimeline;
 	//跑步缓冲时间
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "YuanZu|Timeline")
-	UCurveFloat* RunningRetardance;
+	UPROPERTY(EditAnywhere, Category = "YuanZu|Timeline")
+	TObjectPtr<UCurveFloat>WalkRetardance;
 	//游泳时间轴
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "YuanZu|Timeline")
-	UTimelineComponent* SwimTimeline;
+	UPROPERTY(VisibleAnywhere, Category = "YuanZu|Timeline")
+	TObjectPtr<UTimelineComponent>SwimTimeline;
 	//游泳缓冲时间
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "YuanZu|Timeline")
-	UCurveFloat* SwimRetardance;
+	UPROPERTY(EditAnywhere, Category = "YuanZu|Timeline")
+	TObjectPtr<UCurveFloat>SwimRetardance;
 
 private:
 	/*
@@ -209,23 +258,26 @@ private:
 	void OnRep_OverlappingWidget(AYuanZuWeapon* LastWeapon);
 	//跑步
 	UFUNCTION()
-	void OnRep_IsRunning();
+	void OnRep_IsWalking();
 	//游泳
 	UFUNCTION()
 	void OnRep_IsSwimming();
 	//生命值
 	UFUNCTION()
 	void OnRep_CurrentHealth();
+	//可拾取的物品
+	UFUNCTION()
+	void OnRep_OverlappingItem(AYuanZuPickupItem* LastWeapon);
 
 	/*
 	* RPC----------
 	*/
 	//开始跑步
 	UFUNCTION(Server, Reliable)
-	void ServerPlayRunTimeline();
+	void ServerPlayWalkTimeline();
 	//停止跑步
 	UFUNCTION(Server, Reliable)
-	void ServerReverseRunTimeline();
+	void ServerReverseWalkTimeline();
 	//开始游泳
 	UFUNCTION(Server, Reliable)
 	void ServerPlaySwimTimeline();
@@ -236,6 +288,10 @@ private:
 	UFUNCTION(Server, Reliable)
 	void ServerTurningInPlace(ETurningInPlace NewState);
 
+	//执行徒手攻击扫射动作
+	bool PerformUnarmedAttackSweep();
+	//施加徒手攻击伤害
+	void ApplyUnarmedAttackDamage(AActor* OtherActor);
 	//获取角色在不移动的情况下的摄像机旋转角度
 	FRotator GetAimRotation()const;
 	//角色旋转角度
@@ -248,7 +304,7 @@ private:
 	void EndSwimState();
 	//跑步更新时间轴
 	UFUNCTION()
-	void OnWalkRunTimelineUpdate(float Alpha);
+	void OnRunWalkTimelineUpdate(float Alpha);
 	//游泳更新时间轴
 	UFUNCTION()
 	void OnSwimTimelineUpdate(float Alpha);
@@ -259,12 +315,20 @@ private:
 	void Rebirth();
 	//战绩初始化
 	void PollInit();
+	//选择普通攻击蒙太奇名称
+	FName SelectAttackMontageName();
 	//选择开火蒙太奇名称
 	FName SelectFireMontageName(bool bAimming = false);
+	//选择投掷蒙太奇名称
+	FName SelectThrowMontageName(bool bHighThrow);
+	//选择拉栓蒙太奇名称
+	FName SelectPullBoltMontageName();
 	//选择换弹蒙太奇名称
 	FName SelectReloadMontageName(bool bAimming = false);
 	//设置蹲下和站立的摄像机位置
 	void SetCameraLocation(float DeltaTime);
+	//添加动画蒙太奇的名字
+	void AddAttackAnimName();
 protected:
 	//瞄准偏移
 	void AimOffset(float DeltaTime);
@@ -278,27 +342,41 @@ public:
 	void Move(const FInputActionValue& Value);//移动
 	void Look(const FInputActionValue& Value);//看
 	void SetOverlappingWeapon(AYuanZuWeapon* Weapon);
+	void SetOVerlappingItem(AYuanZuPickupItem* Item);
 	bool IsWeaponEquipped();
 	bool GetIsAiming();
 	bool IsSwimming();
 	bool GetIsFire();
-	void StartRun();
-	void StopRun();
+	void StartWalk();
+	void StopWalk();
 	void StartSwim();
 	void StopSwim();
+	//按下开火
 	void FireButtonPressed();
+	//停止开火
 	void FireButtonReleased();
+	//播放普通攻击蒙太奇
+	void PlayAttackMontage();
+	//播放开火蒙太奇
 	void PlayFireMontage(bool bAimming);
-	void PlayReloadMontage();
+	//播放拉栓蒙太奇
+	void PlayPullBoltMontage();
+	//播放丢抛掷物蒙太奇
+	void PlayAntitankFireMontage(bool bHighThrow);
+	//播放换弹蒙太奇
+	void PlayReloadMontage(bool bAimming);
+	//停止开火蒙太奇
 	void StopFireMontage();
 	//角色被击中
-	void PlayHitReactMontage(bool bIsHit);
+	void PlayHitReactMontage();
 	//在设置UI生命值
 	void Death();
 	//设置子弹类型
 	void SetAmmoType(AYuanZuWeapon* InWeapon);
 	//设置角色材质
-	void SetCharacterMaterila(ETeamType InTeamType);
+	void SetCharacterMaterial(ETeamType InTeamType);
+	//设置狙击枪瞄准
+	void SetJJBQAim(AYuanZuWeapon* InWeapon, bool bIsAimming);
 
 	//更新子弹
 	UFUNCTION(BlueprintCallable, Category = "YuanZu|Weapon")
@@ -306,6 +384,9 @@ public:
 	//显示子弹网格体
 	UFUNCTION(BlueprintCallable, Category = "YuanZu|Weapon")
 	void ShowAmmoMesh(bool bIsVisible);
+	//设置攻击碰撞
+	UFUNCTION(BlueprintCallable, Category = "YuanZu|Weapon")
+	void SetAttackVaild(bool bIsVaild);
 
 	/*
 	* RPC----------
@@ -313,21 +394,29 @@ public:
 	//死亡
 	UFUNCTION(NetMulticast, Reliable)
 	void MulticastDeath();
+	//受击
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastHit();
 
 	AYuanZuWeapon* GetEquippedWeapon()const;
 	FVector GetHitTarget()const;
 	EWeaponType GetWeaponType()const;
+	bool GetIsLift()const;
+	bool GetIsHighThrow()const;
+
 	//内联函数------------------------
 	FORCEINLINE UYuanZuCombatComponent* GetCombat()const { return Combat; }
 	FORCEINLINE AYuanZuWeapon* GetOverlappingWeapon()const { return OverlappingWeapon; }
-	FORCEINLINE UTimelineComponent* GetTimelineComp()const { return RunningTimeline; }
+	FORCEINLINE AYuanZuPickupItem* GetOverlappingItem()const { return OverlappingItem; }
+	FORCEINLINE UTimelineComponent* GetTimelineComp()const { return WalkingTimeline; }
 	FORCEINLINE float GetAO_Yaw()const { return AO_Yaw; }
 	FORCEINLINE float GetAO_Pitch()const { return AO_Pitch; }
 	FORCEINLINE ETurningInPlace GetTurningInPlace()const { return TurningInPlace; }
-	FORCEINLINE bool GetIsRunning()const { return bIsRunning; }
+	FORCEINLINE bool GetIsWalking()const { return bIsWalking; }
 	FORCEINLINE UCameraComponent* GetCamera()const { return Camera; }
 	FORCEINLINE USpringArmComponent* GetCameraBoom()const { return CameraBoom; }
 	FORCEINLINE float GetCurrentHealth()const { return CurrentHealth; }
 	FORCEINLINE float GetMaxHealth()const { return MaxHealth; }
 	FORCEINLINE bool GetIsDeath()const { return bIsDeath; }
+	FORCEINLINE USplineComponent* GetProjectileLine()const { return ProjectileLine; }
 };

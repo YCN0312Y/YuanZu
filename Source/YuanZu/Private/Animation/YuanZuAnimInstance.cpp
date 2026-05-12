@@ -52,7 +52,8 @@ void UYuanZuAnimInstance::NativeUpdateAnimation(float DeltaTime)
 	SwimmingSpeed = YuanZuCharacter->GetCharacterMovement()->MaxSwimSpeed;//获取游泳速度
 	bIsFire = YuanZuCharacter->GetIsFire();//是否开火
 	bIsDeath = YuanZuCharacter->GetIsDeath();//是否死亡
-	WeaponType = YuanZuCharacter->GetWeaponType();
+	WeaponType = YuanZuCharacter->GetWeaponType();//装备的武器类型
+	bIsLift = YuanZuCharacter->GetIsLift();//投掷物是否已扔出
 
 	if (!bIsAccelerating)
 	{
@@ -67,7 +68,7 @@ void UYuanZuAnimInstance::NativeUpdateAnimation(float DeltaTime)
 	FRotator AimRotation = YuanZuCharacter->GetBaseAimRotation();
 	FRotator MovementRotation = UKismetMathLibrary::MakeRotFromX(YuanZuCharacter->GetVelocity());
 	FRotator DeltaRot = UKismetMathLibrary::NormalizedDeltaRotator(MovementRotation, AimRotation);
-	DeltaRotation = FMath::RInterpTo(DeltaRot, DeltaRotation, DeltaTime, 5.0f);
+	DeltaRotation = FMath::RInterpTo(DeltaRotation, DeltaRot, DeltaTime, 5.0f);
 	Direction = DeltaRotation.Yaw;
 
 	if (bIsWeaponEquipped && EquippedWeapon && EquippedWeapon->GetWeaponMesh() && YuanZuCharacter->GetMesh())
@@ -77,7 +78,7 @@ void UYuanZuAnimInstance::NativeUpdateAnimation(float DeltaTime)
 
 		FVector OutPosition;
 		FRotator OutRotation;
-		YuanZuCharacter->GetMesh()->TransformToBoneSpace(FName("hand_r"), LeftHandTransform.GetLocation(), FRotator::ZeroRotator, OutPosition, OutRotation);
+		YuanZuCharacter->GetMesh()->TransformToBoneSpace(FName("hand_r"), LeftHandTransform.GetLocation(), LeftHandTransform.Rotator(), OutPosition, OutRotation);
 
 		LeftHandTransform.SetLocation(OutPosition);
 		LeftHandTransform.SetRotation(FQuat(OutRotation));

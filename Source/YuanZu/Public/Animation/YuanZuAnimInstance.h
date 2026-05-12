@@ -6,6 +6,7 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/Rests/YuanZuTurningInPlace.h"
 #include "Weapons/Rests/YuanZuWeaponTypes.h"
+#include "Components/Rests/YuanZuCombatState.h"
 #include "YuanZuAnimInstance.generated.h"
 
 class AYuanZuCharacterBase;
@@ -67,6 +68,9 @@ private:
 	//是否死亡
 	UPROPERTY(BlueprintReadOnly, Category = YuanZu, meta = (AllowPrivateAccess = "true"))
 	bool bIsDeath;
+	//投掷物是否已扔出
+	UPROPERTY(BlueprintReadOnly, Category = YuanZu, meta = (AllowPrivateAccess = "true"))
+	bool bIsLift;
 	//移动状态
 	UPROPERTY(BlueprintReadOnly, Category = YuanZu, meta = (AllowPrivateAccess = "true"))
 	int32 MoveState;
@@ -79,10 +83,12 @@ private:
 	//武器类型
 	UPROPERTY(BlueprintReadOnly, Category = "YuanZu|Movement", meta = (AllowPrivateAccess = "true"))
 	EWeaponType WeaponType;
-
 	//装备的武器
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = YuanZu, meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(BlueprintReadOnly, Category = YuanZu, meta = (AllowPrivateAccess = "true"))
 	AYuanZuWeapon* EquippedWeapon;
+	//玩家装备状态
+	UPROPERTY(BlueprintReadOnly, Category = YuanZu, meta = (AllowPrivateAccess = "true"))
+	EYuanZuCombatState CombatState;
 
 	FRotator DeltaRotation;
 

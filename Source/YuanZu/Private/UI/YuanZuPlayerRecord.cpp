@@ -3,7 +3,6 @@
 #include "UI/YuanZuPlayerRecord.h"
 #include "Components/TextBlock.h"
 #include "Components/Image.h"
-#include "UI/Lobby/Rests/YuanZuTeamSlotInfo.h"
 
 void UYuanZuPlayerRecord::InitPlayerRecord(ETeamType& InTeamType, FString& InPlayerName, float& InKillScore, int32& InDeathScore, int32& InSAScore)
 {

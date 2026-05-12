@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "UI/Lobby/Rests/YuanZuTeamSlotInfo.h"
 #include "YuanZuPlayerRecord.generated.h"
 
 class UImage;

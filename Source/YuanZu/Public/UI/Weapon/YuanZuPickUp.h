@@ -8,6 +8,7 @@
 
 class UTextBlock;
 class AYuanZuWeapon;
+class AYuanZuPickupItem;
 
 UCLASS()
 class YUANZU_API UYuanZuPickUp : public UUserWidget
@@ -24,11 +25,16 @@ private:
 public:
 	UPROPERTY()
 	AYuanZuWeapon* Weapon;
+	UPROPERTY()
+	AYuanZuPickupItem* Item;
+
 
 private:
 	UFUNCTION()
 	FText GetItemText();
 
+
 public:
 	void SetWeapon(AYuanZuWeapon* InWeapon);
+	void SetItem(AYuanZuPickupItem* InItem);
 };

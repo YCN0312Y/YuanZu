@@ -13,7 +13,10 @@ struct FYuanZuWeaponData
 public:
 	//武器类型
 	UPROPERTY(EditAnywhere, Category = "Weapon")
-	EWeaponType WeaponType;
+	EAmmoType AmmoType;
+	//武器类型
+	UPROPERTY(EditAnywhere, Category = "Weapon")
+	FText AmmoText;
 	//武器图标
 	UPROPERTY(EditAnywhere, Category = "Weapon")
 	UTexture2D* WeaponTexture;

@@ -103,7 +103,7 @@ void AYuanZuPlayerState::SetPlayerTeam(ETeamType NewTeamType)
 	AYuanZuCharacterBase* YuanZuC = Cast<AYuanZuCharacterBase>(GetPawn());
 	if (YuanZuC)
 	{
-		YuanZuC->SetCharacterMaterila(NewTeamType);
+		YuanZuC->SetCharacterMaterial(NewTeamType);
 		YuanZuPlayerController = YuanZuPlayerController == nullptr ? Cast<AYuanZuPlayerController>(YuanZuC->Controller) : YuanZuPlayerController;
 
 		if (YuanZuPlayerController)
@@ -131,7 +131,7 @@ void AYuanZuPlayerState::OnRep_TeamType()
 	AYuanZuCharacterBase* YuanZuC = Cast<AYuanZuCharacterBase>(GetPawn());
 	if (YuanZuC)
 	{
-		YuanZuC->SetCharacterMaterila(TeamType);
+		YuanZuC->SetCharacterMaterial(TeamType);
 		YuanZuPlayerController = YuanZuPlayerController == nullptr ? Cast<AYuanZuPlayerController>(YuanZuC->Controller) : YuanZuPlayerController;
 
 		if (YuanZuPlayerController)

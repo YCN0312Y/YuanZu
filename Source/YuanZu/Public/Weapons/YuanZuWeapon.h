@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Weapons/Rests/YuanZuWeaponTypes.h"
+#include "Items/Rests/YuanZuItemType.h"
 #include "YuanZuWeapon.generated.h"
 
 class USkeletalMeshComponent;
@@ -12,7 +13,6 @@ class USphereComponent;
 class UWidgetComponent;
 class UAnimationAsset;
 class AYuanZuBulletShell;
-class UTexture2D;
 class AYuanZuCharacterBase;
 class AYuanZuPlayerController;
 class USoundCue;
@@ -64,7 +64,7 @@ private:
 	AYuanZuPlayerController* YuanZuOwnerPlayerController;
 
 	//武器骨骼网格体
-	UPROPERTY(VisibleAnywhere)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	USkeletalMeshComponent* WeaponMesh;
 	//子弹网格体
 	UPROPERTY(VisibleAnywhere)
@@ -73,7 +73,7 @@ private:
 	UPROPERTY(VisibleAnywhere)
 	USphereComponent* AreaSphere;
 	//武器状态
-	UPROPERTY(ReplicatedUsing = OnRep_WeaponState, VisibleAnywhere, Category = "YuanZu|PickUp")
+	UPROPERTY(ReplicatedUsing = OnRep_WeaponState)
 	EWeaponState WeaponState;
 	//拾取小组件
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "YuanZu|PickUp", meta = (AllowPrivateAccess = "true"))
@@ -84,11 +84,9 @@ private:
 	//开火动画
 	UPROPERTY(EditAnywhere, Category = "YuanZu|Fire")
 	UAnimationAsset* FireAnimation;
+	//射击速度
 	UPROPERTY(EditAnywhere, Category = "YuanZu|Fire")
 	float ShootingSpeed = 40.f;
-	//子弹壳类
-	UPROPERTY(EditAnywhere, Category = "YuanZu|Ammo")
-	TSubclassOf<AYuanZuBulletShell>BulletShellClass;
 	//瞄准的视场角
 	UPROPERTY(EditAnywhere, Category = "YuanZu|FOV")
 	float AimFOV = 30.f;
@@ -98,9 +96,20 @@ private:
 	//武器类型
 	UPROPERTY(EditAnywhere, Category = "YuanZu|Weapon")
 	EWeaponType WeaponType;
+	//武器应属插槽
+	UPROPERTY(EditAnywhere, Category = "YuanZu|Weapon")
+	EWeaponSlot WeaponSlot;
+
+protected:
 	/*
 	* 弹药
 	*/
+	//子弹壳类
+	UPROPERTY(EditAnywhere, Category = "YuanZu|Ammo")
+	TSubclassOf<AYuanZuBulletShell>BulletShellClass;
+	//子弹类型
+	UPROPERTY(EditAnywhere, Category = "YuanZu|Ammo")
+	EAmmoType AmmoType;
 	//当前弹药数量
 	UPROPERTY(ReplicatedUsing = OnRep_Ammo)
 	int32 Ammo;
@@ -115,7 +124,7 @@ private:
 	UMaterialInterface* ReloadMaterial;
 public:
 	/*
-	* 瞄准准心----------
+	* 瞄准----------
 	*/
 	//中
 	UPROPERTY(EditAnywhere, Category = "YuanZu|HUD")
@@ -152,6 +161,8 @@ public:
 	UPROPERTY(EditAnywhere, Category = "YuanZu|Ammo")
 	UStaticMesh* AmmoTypeMesh;
 
+	EItemType ItemType;
+
 private:
 	//与武器开始重叠
 	UFUNCTION()
@@ -159,8 +170,6 @@ private:
 	//与武器结束重叠
 	UFUNCTION()
 	void OnSphereEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex);
-	//子弹消耗
-	void SpendRound();
 	//设置武器材质
 	void SetWeaponMaterial(bool bIsVisible);
 	/*
@@ -176,6 +185,8 @@ private:
 public:
 	//开火
 	virtual void Fire(const FVector& HitTarget);
+	//子弹消耗
+	virtual void SpendRound();
 	//设置武器状态
 	void SetWeaponState(EWeaponState State);
 	//显示拾取控件
@@ -190,7 +201,7 @@ public:
 	void AddAmmo(int32 AmmoToAdd);
 
 	UFUNCTION(BlueprintPure, Category = YuanZu)
-	FText GetWeaponDisplayName() const { return WeaponName; }
+	FText GetWeaponDisplayName() { return WeaponName; }
 
 	//内联函数----------
 	FORCEINLINE USphereComponent* GetAreaSphere()const { return AreaSphere; }
@@ -200,6 +211,8 @@ public:
 	FORCEINLINE float GetShootingSpeed()const { return ShootingSpeed; }
 	FORCEINLINE EWeaponState GetWeaponState()const { return WeaponState; }
 	FORCEINLINE EWeaponType GetWeaponType()const { return WeaponType; }
+	FORCEINLINE EWeaponSlot GetWeaponSlot()const { return WeaponSlot; }
+	FORCEINLINE EAmmoType GetAmmoType()const { return AmmoType; }
 	FORCEINLINE int32 GetAmmo()const { return Ammo; }
 	FORCEINLINE int32 GetMagCapacity()const { return MagCapacity; }
 	FORCEINLINE UStaticMeshComponent* GetAmmoMesh()const { return AmmoMesh; }

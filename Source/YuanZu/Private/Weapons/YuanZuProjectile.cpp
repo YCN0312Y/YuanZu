@@ -9,6 +9,9 @@
 #include "Sound/SoundCue.h"
 #include "Character/YuanZuCharacterBase.h"
 #include "YuanZu/YuanZu.h"
+#include "Components/YuanZuCombatComponent.h"
+#include "Weapons/YuanZuWeapon.h"
+#include "Weapons/Rests/YuanZuWeaponTypes.h"
 
 AYuanZuProjectile::AYuanZuProjectile()
 {
@@ -57,11 +60,7 @@ void AYuanZuProjectile::OnHit(UPrimitiveComponent* HitComp, AActor* OtherActor, 
 	{
 		return;
 	}
-	AYuanZuCharacterBase* Character = Cast<AYuanZuCharacterBase>(OtherActor);
-	if (Character)
-	{
-		Character->PlayHitReactMontage(true);
-	}
+
 	Destroy();
 }
 
@@ -86,12 +85,20 @@ void AYuanZuProjectile::Destroyed()
 {
 	Super::Destroyed();
 
-	if (ImpactParticle)
+	AYuanZuCharacterBase* Character = Cast<AYuanZuCharacterBase>(GetOwner());
+	if (Character && Character->GetCombat() && Character->GetCombat()->bIsThrow)
 	{
-		UGameplayStatics::SpawnEmitterAtLocation(GetWorld(), ImpactParticle, GetActorTransform());
+		return;
 	}
-	if (ImpactSound)
+	else
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, ImpactSound, GetActorLocation());
+		if (ImpactParticle)
+		{
+			UGameplayStatics::SpawnEmitterAtLocation(GetWorld(), ImpactParticle, GetActorTransform());
+		}
+		if (ImpactSound)
+		{
+			UGameplayStatics::PlaySoundAtLocation(this, ImpactSound, GetActorLocation());
+		}
 	}
 }

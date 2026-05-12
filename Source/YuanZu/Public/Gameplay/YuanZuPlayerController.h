@@ -6,6 +6,7 @@
 #include "GameFramework/PlayerController.h"
 #include "MultiplayerInterface.h"
 #include "UI/Lobby/Rests/YuanZuTeamSlotInfo.h"
+#include "Components/Rests/YuanZuCombatState.h"
 #include "YuanZuPlayerController.generated.h"
 
 class UInputMappingContext;
@@ -74,7 +75,7 @@ private:
 	UInputAction* RunAction;
 	//装备
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "YuanZu|Input", meta = (AllowPrivateAccess = "true"))
-	UInputAction* EquipAction;
+	UInputAction* PickupAction;
 	//蹲下
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "YuanZu|Input", meta = (AllowPrivateAccess = "true"))
 	UInputAction* CrouchAction;
@@ -96,6 +97,9 @@ private:
 	//换弹
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "YuanZu|Input", meta = (AllowPrivateAccess = "true"))
 	UInputAction* ReloadAction;
+	//投掷高度
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "YuanZu|Input", meta = (AllowPrivateAccess = "true"))
+	UInputAction* ThrowAction;
 
 	//游戏总时长
 	float MatchTime = 0.f;
@@ -133,6 +137,10 @@ private:
 	//游戏设置类
 	UPROPERTY(EditAnywhere, Category = "YuanZu|UI", meta = (AllowPrivateAccess = "true"))
 	TSubclassOf<UYuanZuGameSettings> GameSettingsClass;
+	//上一次状态
+	EYuanZuCombatState LastCombatState = EYuanZuCombatState::ECS_UnEquip;
+	//抛射物 高抛/低抛
+	bool biSHeightThrow = true;
 public:
 	//不允许玩家操作
 	UPROPERTY(Replicated)
@@ -147,9 +155,9 @@ protected:
 	void Look(const FInputActionValue& Value);//看
 	void Jump();//跳
 	void StopJumping();//停止跳
-	void StartRunning();//跑
-	void StopRunning();//停止跑
-	void EquipButtonPressed();//装备
+	void StartWalk();//走
+	void StopWalking();//停止走
+	void PickupItem();//装备
 	void Dropped();//丢弃
 	void Reload();//换弹
 	void CrouchButtonPressed();//蹲下
@@ -161,9 +169,10 @@ protected:
 	void StopFire();//停止开火
 	void ShowGameRecord();//显示局内战绩
 	void HideGameRecord();//隐藏局内战绩
+	void SetHeightAntitankThrow();
+
 	//设置倒计时
 	void SetHUDTime();
-	
 	//销毁会话完成返回登录界面
 	UFUNCTION()
 	void OnDestroySessionCompleteForReturnToLogin(bool bWasSuccessful);
@@ -184,7 +193,7 @@ protected:
 private:
 	//仅在服务器上运行的函数 网络调用可靠传输
 	UFUNCTION(Server, Reliable)
-	void ServerEquipButtonPressed();
+	void ServerPickupItem();
 	//丢弃武器
 	UFUNCTION(Server, Reliable)
 	void ServerDropped();
@@ -202,11 +211,11 @@ public:
 
 	//本地真正开始执行：DestroySession->OpenLevel
 	void BeginReturnToLogin();
-
 	//设置比赛状态
 	void OnMatchStateSet(FName State);
 	void HandleInProgress();
 	void HandleCooldown();
+
 	/*
 	* HUD
 	*/

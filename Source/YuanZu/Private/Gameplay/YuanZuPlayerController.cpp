@@ -26,6 +26,9 @@
 #include "UI/PlayerInformation.h"
 #include "UI/YuanZuGameSettings.h"
 #include "MultiplayerSessionsSubsystem.h"
+#include "Items/Rests/YuanZuItemType.h"
+#include "Items/YuanZuPickupItem.h"
+#include "Items/YuanZuAmmoPickup.h"
 
 AYuanZuPlayerController::AYuanZuPlayerController()
 {
@@ -105,12 +108,12 @@ void AYuanZuPlayerController::SetupInputComponent()
 		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &AYuanZuPlayerController::Look);//看
 		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &AYuanZuPlayerController::Jump);//跳
 		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &AYuanZuPlayerController::StopJumping);//停止跳
-		EnhancedInputComponent->BindAction(RunAction, ETriggerEvent::Triggered, this, &AYuanZuPlayerController::StartRunning);//跑
-		EnhancedInputComponent->BindAction(RunAction, ETriggerEvent::Completed, this, &AYuanZuPlayerController::StopRunning);//停止跑
-		EnhancedInputComponent->BindAction(EquipAction, ETriggerEvent::Started, this, &AYuanZuPlayerController::EquipButtonPressed);//装备
+		EnhancedInputComponent->BindAction(RunAction, ETriggerEvent::Started, this, &AYuanZuPlayerController::StartWalk);//走路
+		EnhancedInputComponent->BindAction(RunAction, ETriggerEvent::Completed, this, &AYuanZuPlayerController::StopWalking);//跑
+		EnhancedInputComponent->BindAction(PickupAction, ETriggerEvent::Started, this, &AYuanZuPlayerController::PickupItem);//拾取
 		EnhancedInputComponent->BindAction(DroppedAction, ETriggerEvent::Started, this, &AYuanZuPlayerController::Dropped);//丢弃
 		EnhancedInputComponent->BindAction(CrouchAction, ETriggerEvent::Started, this, &AYuanZuPlayerController::CrouchButtonPressed);//蹲下
-		EnhancedInputComponent->BindAction(AimAction, ETriggerEvent::Triggered, this, &AYuanZuPlayerController::AimButtonPressed);//瞄准
+		EnhancedInputComponent->BindAction(AimAction, ETriggerEvent::Started, this, &AYuanZuPlayerController::AimButtonPressed);//瞄准
 		EnhancedInputComponent->BindAction(AimAction, ETriggerEvent::Completed, this, &AYuanZuPlayerController::AimButtonReleased);//停止瞄准
 		EnhancedInputComponent->BindAction(SwimAction, ETriggerEvent::Triggered, this, &AYuanZuPlayerController::Swim);//游泳
 		EnhancedInputComponent->BindAction(SwimAction, ETriggerEvent::Completed, this, &AYuanZuPlayerController::StopSwimming);//停止游泳
@@ -120,6 +123,7 @@ void AYuanZuPlayerController::SetupInputComponent()
 		EnhancedInputComponent->BindAction(ShowGameRecordAction, ETriggerEvent::Completed, this, &AYuanZuPlayerController::HideGameRecord);//隐藏局内战绩
 		EnhancedInputComponent->BindAction(ReloadAction, ETriggerEvent::Started, this, &AYuanZuPlayerController::Reload);//换弹
 		EnhancedInputComponent->BindAction(SettingsAction, ETriggerEvent::Started, this, &AYuanZuPlayerController::ShowSetting);//设置
+		EnhancedInputComponent->BindAction(ThrowAction, ETriggerEvent::Started, this, &AYuanZuPlayerController::SetHeightAntitankThrow);//设置
 	}
 }
 
@@ -135,7 +139,7 @@ void AYuanZuPlayerController::OnPossess(APawn* aPawn)
 	AYuanZuCharacterBase* YuanZuC = Cast<AYuanZuCharacterBase>(GetPawn());
 	if (YuanZuPS && YuanZuC)
 	{
-		YuanZuC->SetCharacterMaterila(YuanZuPS->GetTeamType());
+		YuanZuC->SetCharacterMaterial(YuanZuPS->GetTeamType());
 	}
 }
 
@@ -158,7 +162,7 @@ void AYuanZuPlayerController::OnRep_Pawn()
 		AYuanZuCharacterBase* YuanZuC = Cast<AYuanZuCharacterBase>(GetPawn());
 		if (YuanZuPS && YuanZuC)
 		{
-			YuanZuC->SetCharacterMaterila(YuanZuPS->GetTeamType());
+			YuanZuC->SetCharacterMaterial(YuanZuPS->GetTeamType());
 		}
 		SetHUDPlayerName(YuanZuPS->GetPlayerNameCustom());
 	}
@@ -757,53 +761,90 @@ void AYuanZuPlayerController::StopJumping()
 	}
 }
 
-void AYuanZuPlayerController::StartRunning()
+void AYuanZuPlayerController::StartWalk()
 {
 	if (bDisableGameplay) return;
 
 	if (YuanZuCharacter)
 	{
-		YuanZuCharacter->StartRun();
+		YuanZuCharacter->StartWalk();
 	}
 }
 
-void AYuanZuPlayerController::StopRunning()
+void AYuanZuPlayerController::StopWalking()
 {
 	if (bDisableGameplay) return;
 
 	if (YuanZuCharacter)
 	{
-		YuanZuCharacter->StopRun();
+		YuanZuCharacter->StopWalk();
 	}
 }
 
-void AYuanZuPlayerController::EquipButtonPressed()
+void AYuanZuPlayerController::PickupItem()
 {
 	if (bDisableGameplay) return;
 
-	if (YuanZuCharacter)
+	if (!HasAuthority())
 	{
-		if (YuanZuCharacter->GetCombat())
+		ServerPickupItem();
+		return;
+	}
+
+	if (YuanZuCharacter && YuanZuCharacter->GetCombat())
+	{
+		if (YuanZuCharacter->GetOverlappingWeapon() && YuanZuCharacter->GetOverlappingWeapon()->ItemType == EItemType::EIT_Weapon)
 		{
-			if (HasAuthority())
+			YuanZuCharacter->GetCombat()->EquipWeapon(YuanZuCharacter->GetOverlappingWeapon());
+		}
+		else
+		{
+			if (YuanZuCharacter->GetOverlappingItem())
 			{
-				YuanZuCharacter->GetCombat()->EquipWeapon(YuanZuCharacter->GetOverlappingWeapon());
-			}
-			else
-			{
-				ServerEquipButtonPressed();
+				AYuanZuAmmoPickup* AmmoPickup = Cast<AYuanZuAmmoPickup>(YuanZuCharacter->GetOverlappingItem());
+				if (AmmoPickup)
+				{
+					EItemType InItemType = YuanZuCharacter->GetOverlappingItem()->GetItemType();
+					switch (InItemType)
+					{
+					case EItemType::EIT_Ammo:
+						YuanZuCharacter->GetCombat()->PickupAmmo(AmmoPickup->GetAmmoType(), AmmoPickup->GetAmmoAmmoCount());
+						break;
+					case EItemType::EIT_Recover:
+						break;
+					}
+				}
 			}
 		}
 	}
 }
 
-void AYuanZuPlayerController::ServerEquipButtonPressed_Implementation()
+void AYuanZuPlayerController::ServerPickupItem_Implementation()
 {
 	if (YuanZuCharacter)
 	{
 		if (YuanZuCharacter->GetCombat())
 		{
-			YuanZuCharacter->GetCombat()->EquipWeapon(YuanZuCharacter->GetOverlappingWeapon());
+			if (YuanZuCharacter->GetOverlappingWeapon() && YuanZuCharacter->GetOverlappingWeapon()->ItemType == EItemType::EIT_Weapon)
+			{
+				YuanZuCharacter->GetCombat()->EquipWeapon(YuanZuCharacter->GetOverlappingWeapon());
+			}
+			else if (YuanZuCharacter->GetOverlappingItem())
+			{
+				AYuanZuAmmoPickup* AmmoPickup = Cast<AYuanZuAmmoPickup>(YuanZuCharacter->GetOverlappingItem());
+				if (AmmoPickup)
+				{
+					EItemType InItemType = YuanZuCharacter->GetOverlappingItem()->GetItemType();
+					switch (InItemType)
+					{
+					case EItemType::EIT_Ammo:
+						YuanZuCharacter->GetCombat()->PickupAmmo(AmmoPickup->GetAmmoType(), AmmoPickup->GetAmmoAmmoCount());
+						break;
+					case EItemType::EIT_Recover:
+						break;
+					}
+				}
+			}
 		}
 	}
 }
@@ -837,7 +878,10 @@ void AYuanZuPlayerController::Reload()
 {
 	if (bDisableGameplay) return;
 
-	if (YuanZuCharacter && YuanZuCharacter->GetCombat() && YuanZuCharacter->GetCombat()->EquippedWeapon)
+	if (YuanZuCharacter 
+		&& YuanZuCharacter->GetCombat() 
+		&& YuanZuCharacter->GetCombat()->EquippedWeapon 
+		&& YuanZuCharacter->GetCombat()->EquippedWeapon->GetWeaponType() != EWeaponType::EWT_SLD)
 	{
 		YuanZuCharacter->GetCombat()->Reload();
 	}
@@ -868,7 +912,15 @@ void AYuanZuPlayerController::AimButtonPressed()
 	{
 		if (YuanZuCharacter->GetCombat() && YuanZuCharacter->GetCombat()->EquippedWeapon)
 		{
-			YuanZuCharacter->GetCombat()->GetAiming(true);
+			if (!YuanZuCharacter->bIsReload && YuanZuCharacter->GetCombat()->EquippedWeapon->GetWeaponType() != EWeaponType::EWT_SLD)
+			{
+				YuanZuCharacter->GetCombat()->GetAiming(true);
+			}
+			else if(!YuanZuCharacter->bIsReload)
+			{
+				//取消举起投掷物
+				YuanZuCharacter->GetCombat()->SetThrow(false);
+			}
 		}
 	}
 }
@@ -879,9 +931,19 @@ void AYuanZuPlayerController::AimButtonReleased()
 
 	if (YuanZuCharacter && !YuanZuCharacter->IsSwimming())
 	{
-		if (YuanZuCharacter->GetCombat())
+		if (YuanZuCharacter->GetCombat() && YuanZuCharacter->GetCombat()->EquippedWeapon)
 		{
-			YuanZuCharacter->GetCombat()->GetAiming(false);
+			//if (YuanZuCharacter->GetCombat()->EquippedWeapon->GetWeaponType() != EWeaponType::EWT_SLD)return;
+
+			if (!YuanZuCharacter->bIsReload && YuanZuCharacter->GetCombat()->EquippedWeapon->GetWeaponType() != EWeaponType::EWT_SLD)
+			{
+				YuanZuCharacter->GetCombat()->GetAiming(false);
+			}
+			else if (!YuanZuCharacter->bIsReload)
+			{				
+				//取消举起投掷物
+				return;
+			}
 		}
 	}
 }
@@ -957,6 +1019,23 @@ void AYuanZuPlayerController::HideGameRecord()
 	{
 		bIsGameRecordOpen = false;
 		YuanZuHUD->MainUIBase->ShowGameRecord(false);
+	}
+}
+
+void AYuanZuPlayerController::SetHeightAntitankThrow()
+{
+	if (YuanZuCharacter && YuanZuCharacter->GetCombat() && YuanZuCharacter->GetCombat()->EquippedWeapon->GetWeaponType() == EWeaponType::EWT_SLD)
+	{
+		if (biSHeightThrow)
+		{
+			biSHeightThrow = false;
+			YuanZuCharacter->GetCombat()->SetThrowMode(biSHeightThrow);
+		}
+		else
+		{
+			biSHeightThrow = true;
+			YuanZuCharacter->GetCombat()->SetThrowMode(biSHeightThrow);
+		}
 	}
 }
 

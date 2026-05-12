@@ -28,6 +28,7 @@ AYuanZuWeapon::AYuanZuWeapon()
 	//武器骨骼网格体----------
 	WeaponMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMesh"));
 	SetRootComponent(WeaponMesh);
+	WeaponMesh->SetBoundsScale(10.f);
 	//碰撞
 	WeaponMesh->SetCollisionResponseToAllChannels(ECR_Block);//将所有碰撞通道的碰撞相应设置为阻挡
 	WeaponMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);//仅将Pawn通道的碰撞相应设置为武略
@@ -80,6 +81,8 @@ void AYuanZuWeapon::BeginPlay()
 		AreaSphere->OnComponentEndOverlap.AddDynamic(this, &AYuanZuWeapon::OnSphereEndOverlap);
 	}
 	Ammo = MagCapacity;
+
+	ItemType = EItemType::EIT_Weapon;
 	
 }
 
@@ -149,16 +152,15 @@ void AYuanZuWeapon::ShowAmmoMesh(bool bIsVisible)
 		SetWeaponMaterial(bIsVisible);
 		break;
 	case EWeaponType::EWT_LDQ:
+		AmmoMesh->SetVisibility(bIsVisible);
 		break;
 	case EWeaponType::EWT_BS:
 		break;
 	case EWeaponType::EWT_SQ:
-				SetWeaponMaterial(bIsVisible);
+		SetWeaponMaterial(bIsVisible);
 		break;
 	case EWeaponType::EWT_HJT:
 		AmmoMesh->SetVisibility(bIsVisible);
-		break;
-	case EWeaponType::EWT_SDQ:
 		break;
 	case EWeaponType::EWT_JJBQ:
 		SetWeaponMaterial(bIsVisible);
@@ -258,8 +260,8 @@ void AYuanZuWeapon::SetWeaponState(EWeaponState State)
 	case EWeaponState::EWS_Equipped:
 		ShowPickUpWidget(false);
 		AreaSphere->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		WeaponMesh->SetSimulatePhysics(false);//启用物理模拟
-		WeaponMesh->SetEnableGravity(false);//启用重力
+		WeaponMesh->SetSimulatePhysics(false);
+		WeaponMesh->SetEnableGravity(false);
 		WeaponMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		break;
 	case EWeaponState::EWS_Dropped:
